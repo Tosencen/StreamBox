@@ -557,6 +557,10 @@ fun SettingsScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .windowInsetsPadding(
+                WindowInsets.systemBars.union(WindowInsets.displayCutout)
+                    .only(WindowInsetsSides.Top)
+            )
             .padding(16.dp)
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -2042,7 +2046,7 @@ fun HistoryListItem(
                 contentAlignment = Alignment.CenterStart
             ) {
                 Text(
-                    text = source.name.ifBlank { source.url },
+                    text = source.url,
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
