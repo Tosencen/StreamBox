@@ -35,6 +35,22 @@ class CatVodTVJavaScriptExecutor(private val context: Context) {
     }
     
     /**
+     * 执行 home() 函数获取首页视频列表
+     * 
+     * @param baseUrl 视频源基础URL
+     * @param jsCode CatVodTV JavaScript 代码
+     * @param timeout 超时时间（秒）
+     * @return 视频列表JSON字符串
+     */
+    suspend fun executeHome(
+        baseUrl: String,
+        jsCode: String,
+        timeout: Long = 30
+    ): String? = withContext(Dispatchers.Main) {
+        executeHomeInWebView(baseUrl, jsCode, timeout)
+    }
+    
+    /**
      * 在 WebView 中执行 JavaScript 代码
      */
     private suspend fun executeInWebView(
@@ -346,6 +362,141 @@ class CatVodTVJavaScriptExecutor(private val context: Context) {
         
         return videoExtensions.any { lowerUrl.contains(it) } ||
                Regex("video|stream|play|m3u8", RegexOption.IGNORE_CASE).containsMatchIn(url)
+    }
+    
+    /**
+     * 在 WebView 中执行 home() 函数获取视频列表
+     */
+    private suspend fun executeHomeInWebView(
+        baseUrl: String,
+        jsCode: String,
+        timeout: Long
+    ): String? = suspendCancellableCoroutine { continuation ->
+        var webView: WebView? = null
+        val latch = CountDownLatch(1)
+        var isCompleted = false
+        
+        try {
+            webView = WebView(context).apply {
+                settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                    userAgentString = "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36"
+                }
+                
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        
+                        // 页面加载完成后，执行 JavaScript 代码并调用 home() 函数
+                        view?.evaluateJavascript("""
+                            (function() {
+                                try {
+                                    // 注入 CatVodTV API 支持函数
+                                    window.request = function(url, options) {
+                                        return fetch(url, options || {}).then(function(res) {
+                                            return res.text();
+                                        });
+                                    };
+                                    
+                                    window.post = function(url, data) {
+                                        return fetch(url, {
+                                            method: 'POST',
+                                            body: JSON.stringify(data),
+                                            headers: { 'Content-Type': 'application/json' }
+                                        }).then(function(res) {
+                                            return res.text();
+                                        });
+                                    };
+                                    
+                                    // PDFH 和 PDFA 函数（用于解析 HTML）
+                                    window.pdfh = function(html, rule) {
+                                        try {
+                                            var parser = new DOMParser();
+                                            var doc = parser.parseFromString(html, 'text/html');
+                                            var elements = doc.querySelectorAll(rule);
+                                            return elements.length > 0 ? elements[0].textContent : '';
+                                        } catch (e) {
+                                            return '';
+                                        }
+                                    };
+                                    
+                                    window.pdfa = function(html, rule) {
+                                        try {
+                                            var parser = new DOMParser();
+                                            var doc = parser.parseFromString(html, 'text/html');
+                                            var elements = doc.querySelectorAll(rule);
+                                            var result = [];
+                                            for (var i = 0; i < elements.length; i++) {
+                                                result.push(elements[i].outerHTML);
+                                            }
+                                            return JSON.stringify(result);
+                                        } catch (e) {
+                                            return '[]';
+                                        }
+                                    };
+                                    
+                                    // 执行用户提供的 JavaScript 代码
+                                    ${jsCode}
+                                    
+                                    // 调用 home() 函数获取首页视频列表
+                                    if (typeof home === 'function') {
+                                        try {
+                                            var homeResult = home();
+                                            if (homeResult && typeof homeResult === 'string') {
+                                                return homeResult;
+                                            } else if (homeResult && typeof homeResult === 'object') {
+                                                return JSON.stringify(homeResult);
+                                            }
+                                        } catch (e) {
+                                            console.error('home() error:', e);
+                                            return JSON.stringify({code: 0, msg: e.message, list: []});
+                                        }
+                                    } else {
+                                        return JSON.stringify({code: 0, msg: 'home() function not found', list: []});
+                                    }
+                                } catch (e) {
+                                    console.error('CatVodTV script error:', e);
+                                    return JSON.stringify({code: 0, msg: e.message, list: []});
+                                }
+                            })();
+                        """.trimIndent()) { result ->
+                            val jsonString = result?.trim('"', '\'', ' ', '\n', '\r') ?: ""
+                            if (!isCompleted) {
+                                continuation.resume(if (jsonString.isNotBlank()) jsonString else null)
+                                isCompleted = true
+                                latch.countDown()
+                            }
+                        }
+                    }
+                }
+                
+                // 加载基础URL（通常是一个空页面或源的主页）
+                loadUrl(baseUrl)
+            }
+            
+            // 设置超时
+            continuation.invokeOnCancellation {
+                webView?.destroy()
+            }
+            
+            // 等待结果（带超时）
+            val timeoutReached = !latch.await(timeout, TimeUnit.SECONDS)
+            
+            if (timeoutReached && !isCompleted) {
+                webView?.destroy()
+                continuation.resume(null)
+                isCompleted = true
+            }
+            
+        } catch (e: Exception) {
+            webView?.destroy()
+            if (!isCompleted) {
+                continuation.resume(null)
+                isCompleted = true
+            }
+        }
     }
 }
 

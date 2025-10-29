@@ -41,6 +41,10 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -60,10 +64,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.navigation.compose.NavHost
 import kotlinx.coroutines.launch
 import org.streambox.datasource.xmbox.XmboxVideoSource
 import org.streambox.datasource.xmbox.config.XmboxConfig
+import org.streambox.datasource.xmbox.model.VideoItem
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
@@ -134,7 +141,8 @@ data class VideoSource(
     val searchable: Boolean = true,
     val changeable: Boolean = true,
     val quickSearch: Boolean = true,
-    val timeout: Int = 15
+    val timeout: Int = 15,
+    val jsCode: String = "" // 保存 JavaScript 代码（如果有）
 )
 
 // 全局视频源列表状态管理
@@ -244,14 +252,9 @@ fun StreamBoxTheme(
     
     // 使用 MaterialKolor 生成完整的配色方案（和 Animeko 一样）
     val colorScheme = if (useDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        // Android 12+ 使用系统动态颜色
+        // Android 12+ 使用系统动态颜色（使用原生 Material3 动态颜色 API）
         if (isDark) {
-            val baseScheme = dynamicColorScheme(
-                primary = seedColor,
-                isDark = true,
-                isAmoled = useBlackBackground,
-                style = PaletteStyle.TonalSpot
-            )
+            val baseScheme = dynamicDarkColorScheme(context)
             if (useBlackBackground) {
                 baseScheme.copy(
                     background = Color.Black,
@@ -262,12 +265,7 @@ fun StreamBoxTheme(
                 baseScheme
             }
         } else {
-            dynamicColorScheme(
-                primary = seedColor,
-                isDark = false,
-                isAmoled = false,
-                style = PaletteStyle.TonalSpot
-            )
+            dynamicLightColorScheme(context)
         }
     } else {
         // 使用自定义主题色
@@ -523,22 +521,205 @@ fun SourcesScreen(
     modifier: Modifier = Modifier,
     onShowAddDialog: () -> Unit = {}
 ) {
-    Box(
-        modifier = modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val videoSource = remember { XmboxVideoSource.create(context) }
+    
+    // 当前选中的视频源（使用第一个）
+    val currentSource = VideoSourceManager.sources.firstOrNull()
+    
+    // 视频列表状态
+    var videoList by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(false) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    
+    // 当视频源变化时，加载视频列表
+    LaunchedEffect(currentSource?.id) {
+        if (currentSource != null && currentSource.jsCode.isNotBlank()) {
+            isLoading = true
+            loadError = null
+            try {
+                // 构建 XmboxConfig
+                val config = XmboxConfig.JavaScriptConfig(
+                    url = currentSource.url,
+                    name = currentSource.name,
+                    jsCode = currentSource.jsCode,
+                    type = if (currentSource.type == SourceType.VOD) {
+                        org.streambox.datasource.xmbox.config.SourceType.VOD
+                    } else {
+                        org.streambox.datasource.xmbox.config.SourceType.LIVE
+                    },
+                    timeout = currentSource.timeout
+                )
+                
+                // 获取首页视频列表
+                val list = videoSource.getHomeVideoList(config)
+                videoList = list
+            } catch (e: Exception) {
+                loadError = e.message ?: "加载失败"
+            } finally {
+                isLoading = false
+            }
+        } else {
+            videoList = emptyList()
+        }
+    }
+    
+    // 如果没有视频源，显示添加提示
+    if (VideoSourceManager.sources.isEmpty()) {
+        Box(
+            modifier = modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
         ) {
-            Text(
-                "还没有添加视频源",
-                style = MaterialTheme.typography.titleMedium
-            )
-            Button(onClick = onShowAddDialog) {
-                Icon(Icons.Default.Add, null)
-                Spacer(Modifier.width(8.dp))
-                Text("添加第一个源")
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    "还没有添加视频源",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Button(onClick = onShowAddDialog) {
+                    Icon(Icons.Default.Add, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("添加第一个源")
+                }
+            }
+        }
+        return
+    }
+    
+    // 显示视频列表
+    when {
+        isLoading -> {
+            Box(
+                modifier = modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+        }
+        loadError != null -> {
+            Box(
+                modifier = modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        "加载失败: $loadError",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Button(onClick = {
+                        scope.launch {
+                            isLoading = true
+                            loadError = null
+                            // 触发重新加载
+                        }
+                    }) {
+                        Text("重试")
+                    }
+                }
+            }
+        }
+        videoList.isEmpty() -> {
+            Box(
+                modifier = modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "暂无视频",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+        else -> {
+            // 使用网格布局显示视频列表
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 160.dp),
+                modifier = modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(videoList.size) { index ->
+                    val video = videoList[index]
+                    VideoItemCard(
+                        video = video,
+                        onClick = {
+                            // TODO: 播放视频
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun VideoItemCard(
+    video: VideoItem,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column {
+            // 封面图片
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(0.75f) // 4:3 比例
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                if (video.pic.isNotBlank()) {
+                    AsyncImage(
+                        model = video.pic,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                        error = androidx.compose.ui.graphics.painter.ColorPainter(MaterialTheme.colorScheme.surfaceVariant)
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.VideoLibrary,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(32.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            
+            // 视频信息
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = video.name.ifBlank { "未知" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (video.note.isNotBlank()) {
+                    Text(
+                        text = video.note,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }
@@ -1741,7 +1922,8 @@ fun AddSourceDialog(
                                 searchable = true, // JavaScript源默认可搜索
                                 changeable = true, // JavaScript源默认可换源
                                 quickSearch = true, // JavaScript源默认快速搜索
-                                timeout = config.timeout
+                                timeout = config.timeout,
+                                jsCode = config.jsCode // 保存 JavaScript 代码
                             )
                         }
                         null -> {
@@ -1778,7 +1960,7 @@ fun AddSourceDialog(
                     .padding(vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // 输入框（带文件夹图标）
+                // 输入框（带文件夹图标）- 使用标准 Material 3 样式
                 OutlinedTextField(
                     value = inputText,
                     onValueChange = { inputText = it },
@@ -1800,9 +1982,11 @@ fun AddSourceDialog(
                     },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface
                     ),
-                    shape = RoundedCornerShape(8.dp)
+                    shape = MaterialTheme.shapes.medium
                 )
                 
                 // 点我粘贴按钮

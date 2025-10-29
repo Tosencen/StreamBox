@@ -59,6 +59,9 @@ dependencies {
     // XMBOX 视频源识别模块
     implementation(project(":datasource:xmbox"))
     
+    // Coil - 图片加载
+    implementation("io.coil-kt:coil-compose:2.5.0")
+    
     // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
