@@ -53,6 +53,8 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.rememberCoroutineScope
+import android.content.Context
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
@@ -81,6 +83,85 @@ class MainActivity : ComponentActivity() {
 
 enum class DarkModeOption {
     LIGHT, DARK, AUTO
+}
+
+// Shape 对象必须在顶层定义（在所有函数之前）
+object TopLeftDiagonalShape : Shape {
+    override fun createOutline(
+        size: Size,
+        layoutDirection: LayoutDirection,
+        density: Density
+    ): Outline {
+        return Outline.Generic(
+            Path().apply {
+                moveTo(0f, 0f)
+                lineTo(size.width, 0f)
+                lineTo(0f, size.height)
+                close()
+            },
+        )
+    }
+}
+
+object BottomRightDiagonalShape : Shape {
+    override fun createOutline(
+        size: Size,
+        layoutDirection: LayoutDirection,
+        density: Density
+    ): Outline {
+        return Outline.Generic(
+            Path().apply {
+                moveTo(size.width, size.height)
+                lineTo(0f, size.height)
+                lineTo(size.width, 0f)
+                close()
+            },
+        )
+    }
+}
+
+// ========== 源管理数据模型（参考 XMBOX，使用 Animeko 代码规范）==========
+enum class SourceType {
+    VOD,  // 点播
+    LIVE  // 直播
+}
+
+data class VideoSource(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val name: String,
+    val url: String,
+    val type: SourceType = SourceType.VOD,
+    val searchable: Boolean = true,
+    val changeable: Boolean = true,
+    val quickSearch: Boolean = true,
+    val timeout: Int = 15
+)
+
+// 全局视频源列表状态管理
+object VideoSourceManager {
+    val sources = mutableStateListOf<VideoSource>()
+    
+    fun addSource(source: VideoSource) {
+        // 检查是否已存在（根据 ID）
+        if (!sources.any { it.id == source.id }) {
+            sources.add(source)
+        }
+    }
+    
+    fun removeSource(source: VideoSource) {
+        sources.remove(source)
+    }
+    
+    fun updateSource(updatedSource: VideoSource) {
+        val index = sources.indexOfFirst { it.id == updatedSource.id }
+        if (index >= 0) {
+            sources[index] = updatedSource
+        }
+    }
+    
+    fun getSourceById(id: String): VideoSource? {
+        return sources.firstOrNull { it.id == id }
+    }
 }
 
 @Composable
@@ -184,6 +265,7 @@ fun StreamBoxTheme(
             dynamicColorScheme(
                 primary = seedColor,
                 isDark = false,
+                isAmoled = false,
                 style = PaletteStyle.TonalSpot
             )
         }
@@ -377,7 +459,7 @@ fun MainScreen(
                             if (showAddSourceDialog2) {
                                 AddSourceDialog(
                                     onDismiss = { showAddSourceDialog2 = false },
-                                    onConfirm = { newSource ->
+                                    onConfirm = { newSource: VideoSource ->
                                         VideoSourceManager.addSource(newSource)
                                         showAddSourceDialog2 = false
                                     }
@@ -389,7 +471,7 @@ fun MainScreen(
                                 HistoryDialog(
                                     sources = VideoSourceManager.sources.toList(),
                                     onDismiss = { showHistoryDialog = false },
-                                    onDelete = { source ->
+                                    onDelete = { source: VideoSource ->
                                         VideoSourceManager.removeSource(source)
                                     }
                                 )
@@ -403,7 +485,7 @@ fun MainScreen(
                 if (showAddSourceDialog && selectedItem == 0) {
                     AddSourceDialog(
                         onDismiss = { showAddSourceDialog = false },
-                        onConfirm = { newSource ->
+                        onConfirm = { newSource: VideoSource ->
                             VideoSourceManager.addSource(newSource)
                             showAddSourceDialog = false
                         }
@@ -472,23 +554,8 @@ fun SettingsScreen(
     onShowAddSourceDialog: () -> Unit = {},
     onShowHistoryDialog: () -> Unit = {}
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
-        // TopAppBar 显示标题和记录按钮
-        TopAppBar(
-            title = { Text("设置") },
-            actions = {
-                IconButton(onClick = onShowHistoryDialog) {
-                    Icon(Icons.Default.History, contentDescription = "记录")
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = MaterialTheme.colorScheme.surface,
-                titleContentColor = MaterialTheme.colorScheme.onSurface
-            )
-        )
-        
-        Column(
-        modifier = modifier
+    Column(
+        modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
             .verticalScroll(rememberScrollState()),
@@ -791,10 +858,6 @@ fun ThemeSettingsScreen(
     }
 }
 
-enum class DarkModeOption {
-    LIGHT, DARK, AUTO
-}
-
 // ========== 深色模式选择面板（复刻 Animeko）==========
 @Composable
 fun DarkModeSelectPanel(
@@ -846,7 +909,7 @@ fun DarkModeSelectPanel(
 }
 
 @Composable
-private fun ColorSchemePreviewItem(
+fun ColorSchemePreviewItem(
     onClick: () -> Unit,
     text: @Composable () -> Unit,
     panel: @Composable () -> Unit,
@@ -1016,40 +1079,6 @@ fun DiagonalMixedThemePreviewPanel(
             modifier = Modifier
                 .fillMaxSize()
                 .clip(BottomRightDiagonalShape),
-        )
-    }
-}
-
-private object TopLeftDiagonalShape : Shape {
-    override fun createOutline(
-        size: Size,
-        layoutDirection: LayoutDirection,
-        density: Density
-    ): Outline {
-        return Outline.Generic(
-            Path().apply {
-                moveTo(0f, 0f)
-                lineTo(size.width, 0f)
-                lineTo(0f, size.height)
-                close()
-            },
-        )
-    }
-}
-
-private object BottomRightDiagonalShape : Shape {
-    override fun createOutline(
-        size: Size,
-        layoutDirection: LayoutDirection,
-        density: Density
-    ): Outline {
-        return Outline.Generic(
-            Path().apply {
-                moveTo(size.width, size.height)
-                lineTo(0f, size.height)
-                lineTo(size.width, 0f)
-                close()
-            },
         )
     }
 }
@@ -1295,51 +1324,6 @@ fun ColorOption(
     }
 }
 
-// ========== 源管理（参考 XMBOX，使用 Animeko 代码规范）==========
-
-// 视频源数据模型（参考 XMBOX）
-// 全局视频源列表状态管理
-object VideoSourceManager {
-    val sources = mutableStateListOf<VideoSource>()
-    
-    fun addSource(source: VideoSource) {
-        // 检查是否已存在（根据 ID）
-        if (!sources.any { it.id == source.id }) {
-            sources.add(source)
-        }
-    }
-    
-    fun removeSource(source: VideoSource) {
-        sources.remove(source)
-    }
-    
-    fun updateSource(updatedSource: VideoSource) {
-        val index = sources.indexOfFirst { it.id == updatedSource.id }
-        if (index >= 0) {
-            sources[index] = updatedSource
-        }
-    }
-    
-    fun getSourceById(id: String): VideoSource? {
-        return sources.firstOrNull { it.id == id }
-    }
-}
-
-data class VideoSource(
-    val id: String = java.util.UUID.randomUUID().toString(),
-    val name: String,
-    val url: String,
-    val type: SourceType = SourceType.VOD,
-    val searchable: Boolean = true,
-    val changeable: Boolean = true,
-    val quickSearch: Boolean = true,
-    val timeout: Int = 15
-)
-
-enum class SourceType {
-    VOD,  // 点播
-    LIVE  // 直播
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1564,7 +1548,7 @@ fun SourceManagementScreen(
                     selectedTabIndex = 1
                 }
             },
-            onConfirm = { newSource ->
+            onConfirm = { newSource: VideoSource ->
                 VideoSourceManager.addSource(newSource)
                 showAddDialog = false
                 selectedTabIndex = 1  // 切换到视频列表
@@ -1577,7 +1561,7 @@ fun SourceManagementScreen(
         EditSourceDialog(
             source = source,
             onDismiss = { editingSource = null },
-            onConfirm = { updatedSource ->
+            onConfirm = { updatedSource: VideoSource ->
                 // 更新全局列表中的源
                 VideoSourceManager.updateSource(updatedSource)
                 editingSource = null
@@ -1826,7 +1810,6 @@ fun AddSourceDialog(
                     Icon(
                         Icons.Default.ContentCopy,
                         contentDescription = null,
-                        tint = Color(0xFFFFC107), // 黄色，匹配 XMBOX
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -1987,3 +1970,118 @@ fun EditSourceDialog(
     )
 }
 
+
+/**
+ * 记录对话框 - 显示视频源列表（匹配 XMBOX 样式）
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HistoryDialog(
+    sources: List<VideoSource>,
+    onDismiss: () -> Unit,
+    onDelete: (VideoSource) -> Unit
+) {
+    val context = LocalContext.current
+    val clipboardManager = remember { context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("视频源记录") },
+        text = {
+            if (sources.isEmpty()) {
+                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("暂无记录", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(sources.size) { index ->
+                        val source = sources[index]
+                        HistoryListItem(source = source, isFirst = index == 0, onCopy = { clipboardManager?.let { cm -> val clip = android.content.ClipData.newPlainText("视频源", source.url); cm.setPrimaryClip(clip) } }, onDelete = { onDelete(source) })
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+    )
+}
+
+/**
+ * 记录列表项 - 匹配 XMBOX 样式
+ */
+@Composable
+fun HistoryListItem(
+    source: VideoSource,
+    isFirst: Boolean,
+    onCopy: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 左边的框 - 显示视频源名称或URL
+        Card(
+            modifier = Modifier
+                .weight(1f)
+                .height(48.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            )
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                Text(
+                    text = source.name.ifBlank { source.url },
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        
+        // 右边的复制和删除按钮
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            // 复制按钮
+            IconButton(
+                onClick = onCopy,
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(
+                    Icons.Default.ContentCopy,
+                    contentDescription = "复制",
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            
+            // 删除按钮（第一个不可删除）
+            IconButton(
+                onClick = onDelete,
+                enabled = !isFirst,
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "删除",
+                    tint = if (isFirst) {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    }
+                )
+            }
+        }
+    }
+}
